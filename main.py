@@ -1,10 +1,10 @@
 import tkinter as tk
 from tkinter import ttk
-import time
 from datetime import datetime, timedelta
 import json
 import os
 from plyer import notification
+from PIL import Image, ImageTk
 
 
 class ProductivityApp:
@@ -12,6 +12,12 @@ class ProductivityApp:
         self.data = None
         self.root = root
         self.root.title("Productivity Tracker")
+        
+        # Load images
+        self.play_image = ImageTk.PhotoImage(Image.open("images/play.png").resize((10, 10),
+                                                                            Image.Resampling.LANCZOS))
+        self.pause_image = ImageTk.PhotoImage(Image.open("images/pause.png").resize((10, 10),
+                                                                              Image.Resampling.LANCZOS))
 
         # Variables
         self.focus_time = tk.IntVar(value=25)
@@ -19,7 +25,9 @@ class ProductivityApp:
         self.time_remaining = tk.StringVar()
         self.activity_label = tk.StringVar(value="Study")
         self.timer_running = False
+        self.timer_paused = False
         self.notified = False
+        self.in_focus_mode = True  # Boolean to track if in focus mode
         self.start_time = None
         self.end_time = None
         self.elapsed_time = self.focus_time.get() * 60
@@ -43,7 +51,8 @@ class ProductivityApp:
         ttk.Entry(controls_frame, textvariable=self.activity_label).grid(row=2, column=1, padx=5, pady=5)
 
         ttk.Button(controls_frame, text="Start", command=self.start_timer).grid(row=3, column=0, padx=5, pady=5)
-        self.pause_button = ttk.Button(controls_frame, text="Pause", command=self.pause_timer)
+        self.pause_button = ttk.Button(controls_frame, text="Pause", command=self.pause_timer,
+                                       image=self.pause_image, compound=tk.LEFT)
         self.pause_button.grid(row=3, column=1, padx=5, pady=5)
         ttk.Button(controls_frame, text="Reset", command=self.reset_timer).grid(row=3, column=2, padx=5, pady=5)
 
@@ -74,46 +83,44 @@ class ProductivityApp:
     def start_timer(self):
         if not self.timer_running:
             self.start_time = datetime.now()
-            self.end_time = self.start_time + timedelta(minutes=self.focus_time.get() if
-            self.toggle_button['text'] == "Switch to Break" else self.break_time.get())
+            self.end_time = self.start_time + timedelta(
+                minutes=self.focus_time.get() if self.in_focus_mode else self.break_time.get())
             self.timer_running = True
+            self.timer_paused = False
             self.notified = False
             self.update_timer()
 
     def pause_timer(self):
         if self.timer_running:
             self.timer_running = False
-            self.pause_button.config(text="Resume")
+            self.timer_paused = True
+            self.pause_button.config(text="Resume", image=self.play_image)
             elapsed_time = datetime.now() - self.start_time
             self.elapsed_time = int(elapsed_time.total_seconds())
-        else:
+        elif self.timer_paused:
             self.timer_running = True
+            self.timer_paused = False
             self.start_time = datetime.now() - timedelta(seconds=self.elapsed_time)
-            self.end_time = datetime.now() + timedelta(seconds=(self.focus_time.get() * 60) -
-                                                               self.elapsed_time)
-            self.pause_button.config(text="Pause")
+            if self.in_focus_mode:
+                self.end_time = self.start_time + timedelta(minutes=self.focus_time.get()) - timedelta(
+                    seconds=self.elapsed_time)
+            else:
+                self.end_time = self.start_time + timedelta(minutes=self.break_time.get()) - timedelta(
+                    seconds=self.elapsed_time)
+            self.pause_button.config(text="Pause", image=self.pause_image)
             self.update_timer()
 
     def reset_timer(self):
-        if self.toggle_button['text'] == "Switch to Focus":
-            self.notified = False
-            self.timer_running = False
-            self.pause_button.config(text="Pause")
-            self.elapsed_time = self.break_time.get() * 60
-            self.update_time_display()
-            return
-        if self.timer_running:
-            elapsed_time = datetime.now() - self.start_time
-        else:
-            elapsed_time = timedelta(seconds=self.elapsed_time)
-
-        self.elapsed_time = int(elapsed_time.total_seconds())
-        self.save_session(end=False)
-
         self.notified = False
         self.timer_running = False
-        self.elapsed_time = self.focus_time.get() * 60
-        self.pause_button.config(text="Pause")
+        self.pause_button.config(text="Pause", image=self.pause_image)
+
+        if self.in_focus_mode:
+            self.save_session()  # Save focus session before resetting
+            self.elapsed_time = self.focus_time.get() * 60
+        else:
+            self.elapsed_time = self.break_time.get() * 60
+
         self.update_time_display()
 
     def notify_time_up(self):
@@ -127,25 +134,29 @@ class ProductivityApp:
 
     def toggle_timer(self):
         if self.timer_running:
-            return
-        if self.toggle_button['text'] == "Switch to Break":
-            self.toggle_button.config(text="Switch to Focus")
-            self.reset_timer()
-            self.elapsed_time = self.break_time.get() * 60
-        else:
+            self.timer_running = False
+            # Save only focus session
+            if self.in_focus_mode:
+                self.save_session()
+
+        self.in_focus_mode = not self.in_focus_mode
+
+        if self.in_focus_mode:
             self.toggle_button.config(text="Switch to Break")
-            self.reset_timer()
             self.elapsed_time = self.focus_time.get() * 60
+        else:
+            self.toggle_button.config(text="Switch to Focus")
+            self.elapsed_time = self.break_time.get() * 60
+
+        self.timer_paused = False
         self.update_time_display()
 
-    def save_session(self, end):
-        if self.toggle_button['text'] == "Switch to Focus":
-            return
-        if end:
-            duration_seconds = self.focus_time.get() * 60
-        else:
-            elapsed_time = (datetime.now() - self.start_time).total_seconds()
-            duration_seconds = elapsed_time + 0 if elapsed_time > 0 else self.focus_time.get()
+    def save_session(self):
+        if not self.in_focus_mode:
+            return  # Do not save break sessions
+
+        elapsed_time = (datetime.now() - self.start_time).total_seconds()
+        duration_seconds = elapsed_time if elapsed_time > 0 else self.focus_time.get() * 60 + elapsed_time
 
         duration_minutes = int(duration_seconds // 60)
 
@@ -160,21 +171,21 @@ class ProductivityApp:
         session_data = {
             "activity_label": self.activity_label.get(),
             "focus_duration": duration_minutes,
-            # "break_duration": self.break_time.get()
         }
+
         if os.path.exists(self.data_file):
             with open(self.data_file, 'r') as file:
                 data = json.load(file)
         else:
             data = {}
+
         date_str = datetime.now().strftime("%d.%m.%Y")
         if date_str not in data:
             data[date_str] = []
 
         for session in data[date_str]:
             if session["activity_label"] == self.activity_label.get():
-                session["focus_duration"] += self.focus_time.get()
-                # session["break_duration"] += self.break_time.get()
+                session["focus_duration"] += duration_minutes
                 break
         else:
             data[date_str].append(session_data)
