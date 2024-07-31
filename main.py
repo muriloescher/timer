@@ -113,6 +113,7 @@ class ProductivityApp:
     def reset_timer(self):
         self.notified = False
         self.timer_running = False
+        self.timer_paused = False
         self.pause_button.config(text="Pause", image=self.pause_image)
 
         if self.in_focus_mode:
